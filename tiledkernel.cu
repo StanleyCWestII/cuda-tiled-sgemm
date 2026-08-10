@@ -24,11 +24,25 @@ void tiledMult(float* m1, float* m2, float* m3, unsigned int R, unsigned int C, 
     int col = bx * TILE_WIDTH + tx;
     float Fvalue = 0;
 
-    for (int i = 0; i < K/TILE_WIDTH; ++i)
+    for (int i = 0; i < (K + TILE_WIDTH - 1)/TILE_WIDTH; ++i)
     {
         // loading matrix elements into shared memory
-        Mds[ty][tx] = m1[row * K + i * TILE_WIDTH + tx];
-        Nds[ty][tx] = m2[(i * TILE_WIDTH + ty) * C + col];
+        if ((row < R) && (i * TILE_WIDTH + tx) < K)
+        {
+            Mds[ty][tx] = m1[row * K + i * TILE_WIDTH + tx];
+        }
+        else
+        {
+            Mds[ty][tx] = 0.0f;
+        }
+        if ((col < C) && (i * TILE_WIDTH + ty) < K)
+        {
+            Nds[ty][tx] = m2[(i * TILE_WIDTH + ty) * C + col];
+        }
+        else
+        {
+            Nds[ty][tx] = 0.0f;
+        }
         __syncthreads();
 
         // computing final value
@@ -38,5 +52,8 @@ void tiledMult(float* m1, float* m2, float* m3, unsigned int R, unsigned int C, 
         }
         __syncthreads();
     }
-    m3[row * C + col] = Fvalue;
+    if ((row < R) && (col < C))
+    {
+        m3[row * C + col] = Fvalue;
+    }
 }
