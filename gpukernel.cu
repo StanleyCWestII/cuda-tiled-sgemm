@@ -5,6 +5,7 @@ __global__
 // m3 is the output matrix
 // R represents how many rows a matrix has
 // C represents how many columns a matrix has
+// K represents the width of m1
 void matrixMult(float* m1, float* m2, float* m3, unsigned int R, unsigned int C, int K)
 {
     unsigned int row = blockIdx.y * blockDim.y + threadIdx.y;
@@ -13,11 +14,11 @@ void matrixMult(float* m1, float* m2, float* m3, unsigned int R, unsigned int C,
     if ((row < R) && (col < C))
     {
         // storage for computation
-        float F1value = 0;
+        float Fvalue = 0;
         for (int k = 0; k < K; ++k)
         {
-            F1value += m1[row * K + k] * m2[k * C + col];
+            Fvalue += m1[row * K + k] * m2[k * C + col];
         }
-        m3[row * C + col] = F1value;
+        m3[row * C + col] = Fvalue;
     }
 }
