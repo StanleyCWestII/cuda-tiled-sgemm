@@ -13,8 +13,12 @@
 #define TEST_CUBLAS     1   // the ceiling. NVIDIA's own kernel, for reference.
 
 // Must match the values you use inside your kernels.
-#define TILE_WIDTH      16
+#define COARSE_BLOCK    16
 #define COARSE_FACTOR   4
+
+// tiledkernel.cu: 16x16 threads, each owning a 2x2 patch -> 32x32 output tile.
+#define TILED_BLOCK     16
+#define TILED_OUT_TILE  32
 
 // ---------------------------------------------------------------------------
 // Expected kernel signatures, all identical to your naive one:
@@ -98,18 +102,18 @@ static void launch(Variant v, const float* dA, const float* dB, float* dC,
     }
 #if TEST_TILED
     else if (v == TILED) {
-        dim3 block(TILE_WIDTH, TILE_WIDTH);
-        dim3 grid((C + TILE_WIDTH - 1) / TILE_WIDTH,
-                  (R + TILE_WIDTH - 1) / TILE_WIDTH);
+        dim3 block(TILED_BLOCK, TILED_BLOCK);
+        dim3 grid((C + TILED_OUT_TILE - 1) / TILED_OUT_TILE,
+                  (R + TILED_OUT_TILE - 1) / TILED_OUT_TILE);
         tiledMult<<<grid, block>>>((float*)dA, (float*)dB, dC, uR, uC, K);
     }
 #endif
 #if TEST_COARSENED
     else if (v == COARSENED) {
-        int cols = TILE_WIDTH * COARSE_FACTOR;
-        dim3 block(TILE_WIDTH, TILE_WIDTH);
+        int cols = COARSE_BLOCK * COARSE_FACTOR;
+        dim3 block(COARSE_BLOCK, COARSE_BLOCK);
         dim3 grid((C + cols - 1) / cols,
-                  (R + TILE_WIDTH - 1) / TILE_WIDTH);
+                  (R + COARSE_BLOCK - 1) / COARSE_BLOCK);
         matrixMultCoarsened<<<grid, block>>>((float*)dA, (float*)dB, dC, uR, uC, K);
     }
 #endif
