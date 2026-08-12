@@ -18,7 +18,7 @@
 
 // tiledkernel.cu: 16x16 threads, each owning a 2x2 patch -> 32x32 output tile.
 #define TILED_BLOCK     16
-#define TILED_OUT_TILE  32
+#define TILED_OUT_TILE  64   // must match TILE_WIDTH in tiledkernel.cu
 
 // ---------------------------------------------------------------------------
 // Expected kernel signatures, all identical to your naive one:
@@ -216,7 +216,11 @@ static int runCase(Variant v, int R, int C_cols, int K, const char* label)
 // Returns milliseconds per call, averaged.
 static float benchmark(Variant v, int R, int C_cols, int K)
 {
-    const int WARMUP = 3, ITERS = 20;
+    // The 4090 idles at 210 MHz and boosts to ~3135. A fixed warmup iteration
+    // count is not enough for a fast kernel, so warm up by elapsed TIME, then
+    // take the best of several timed reps (noise only ever adds time).
+    const float WARM_MS = 400.0f;
+    const int ITERS = 20, REPS = 3;
 
     size_t bytesA = (size_t)R * K * sizeof(float);
     size_t bytesB = (size_t)K * C_cols * sizeof(float);
@@ -229,19 +233,30 @@ static float benchmark(Variant v, int R, int C_cols, int K)
     CUDA_CHECK(cudaMemset(dA, 0, bytesA));
     CUDA_CHECK(cudaMemset(dB, 0, bytesB));
 
-    for (int i = 0; i < WARMUP; i++) launch(v, dA, dB, dC, R, C_cols, K);
-    CUDA_CHECK(cudaDeviceSynchronize());
-
     cudaEvent_t start, stop;
     CUDA_CHECK(cudaEventCreate(&start));
     CUDA_CHECK(cudaEventCreate(&stop));
-    CUDA_CHECK(cudaEventRecord(start));
-    for (int i = 0; i < ITERS; i++) launch(v, dA, dB, dC, R, C_cols, K);
-    CUDA_CHECK(cudaEventRecord(stop));
-    CUDA_CHECK(cudaEventSynchronize(stop));
 
-    float ms = 0.0f;
-    CUDA_CHECK(cudaEventElapsedTime(&ms, start, stop));
+    float warm = 0.0f;
+    CUDA_CHECK(cudaEventRecord(start));
+    do {
+        for (int i = 0; i < 5; i++) launch(v, dA, dB, dC, R, C_cols, K);
+        CUDA_CHECK(cudaEventRecord(stop));
+        CUDA_CHECK(cudaEventSynchronize(stop));
+        CUDA_CHECK(cudaEventElapsedTime(&warm, start, stop));
+    } while (warm < WARM_MS);
+
+    float ms = 1e30f;
+    for (int r = 0; r < REPS; r++) {
+        CUDA_CHECK(cudaEventRecord(start));
+        for (int i = 0; i < ITERS; i++) launch(v, dA, dB, dC, R, C_cols, K);
+        CUDA_CHECK(cudaEventRecord(stop));
+        CUDA_CHECK(cudaEventSynchronize(stop));
+
+        float rep = 0.0f;
+        CUDA_CHECK(cudaEventElapsedTime(&rep, start, stop));
+        if (rep < ms) ms = rep;
+    }
 
     cudaEventDestroy(start); cudaEventDestroy(stop);
     cudaFree(dA); cudaFree(dB); cudaFree(dC);

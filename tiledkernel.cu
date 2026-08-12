@@ -1,6 +1,9 @@
 #include <cuda_runtime.h>
 
-#define TILE_WIDTH 32
+#define TM 4
+#define TN 4
+#define TILE_WIDTH 64
+#define STRIDE (TILE_WIDTH / TM)
 
 __global__
 
@@ -11,7 +14,7 @@ __global__
 // K is the width of the matrix
 void tiledMult(float* m1, float* m2, float* m3, unsigned int R, unsigned int C, int K)
 {
-    // declares float variables in shared memory with 16 * 16 = 64 positions
+    // declares float variables in shared memory with STRIDE * STRIDE = 64 positions
     __shared__ float Mds[TILE_WIDTH][TILE_WIDTH];
     __shared__ float Nds[TILE_WIDTH][TILE_WIDTH];
 
@@ -22,33 +25,30 @@ void tiledMult(float* m1, float* m2, float* m3, unsigned int R, unsigned int C, 
 
     int row = by * (TILE_WIDTH) + ty;
     int col = bx * (TILE_WIDTH) + tx;
-    float Fvalue00 = 0;
-    float Fvalue01 = 0;
-    float Fvalue10 = 0;
-    float Fvalue11 = 0;
+    float acc[TM][TN] = {0};
 
     for (int i = 0; i < (K + TILE_WIDTH - 1)/TILE_WIDTH; ++i)
     {
         // loading matrix elements into shared memory
-        for (int dy = 0; dy < 2; ++dy)
+        for (int dy = 0; dy < TM; ++dy)
         {
-            for (int dx = 0; dx < 2; ++dx)
+            for (int dx = 0; dx < TN; ++dx)
             {
-                if ((row + dy*16 < R) && (i * TILE_WIDTH + tx + dx*16) < K)
+                if ((row + dy*STRIDE < R) && (i * TILE_WIDTH + tx + dx*STRIDE) < K)
                 {
-                    Mds[ty + dy*16][tx + dx*16] = m1[(row + dy*16) * K + i*TILE_WIDTH + tx + dx*16];
+                    Mds[ty + dy*STRIDE][tx + dx*STRIDE] = m1[(row + dy*STRIDE) * K + i*TILE_WIDTH + tx + dx*STRIDE];
                 }
                 else
                 {
-                    Mds[ty + dy*16][tx + dx*16] = 0.0f;
+                    Mds[ty + dy*STRIDE][tx + dx*STRIDE] = 0.0f;
                 }
-                if ((col + dx*16 < C) && (i * TILE_WIDTH + ty + dy*16) < K)
+                if ((col + dx*STRIDE < C) && (i * TILE_WIDTH + ty + dy*STRIDE) < K)
                 {
-                    Nds[ty + dy*16][tx + dx*16] = m2[(i * TILE_WIDTH + ty + dy*16) * C + col + dx*16];
+                    Nds[ty + dy*STRIDE][tx + dx*STRIDE] = m2[(i * TILE_WIDTH + ty + dy*STRIDE) * C + col + dx*STRIDE];
                 }
                 else
                 {
-                    Nds[ty + dy*16][tx + dx*16] = 0.0f;
+                    Nds[ty + dy*STRIDE][tx + dx*STRIDE] = 0.0f;
                 }
             }
         }
@@ -57,32 +57,43 @@ void tiledMult(float* m1, float* m2, float* m3, unsigned int R, unsigned int C, 
         // computing final value
         for (int j = 0; j < TILE_WIDTH; ++j)
         {
-            float a0 = Mds[ty][j];
-            float b0 = Nds[j][tx];
-            float a1 = Mds[ty + 16][j];
-            float b1 = Nds[j][tx + 16];
+            float a[TM];
+            float b[TN];
+            #pragma unroll
+            for (int y = 0; y < TM; ++y)
+            {
+                a[y] = Mds[ty + y*STRIDE][j];
+            }
 
-            Fvalue00 += a0 * b0;
-            Fvalue01 += a0 * b1;
-            Fvalue10 += a1 * b0;
-            Fvalue11 += a1 * b1;
+            #pragma unroll
+            for (int q = 0; q < TN; ++q)
+            {
+                b[q] = Nds[j][tx + q*STRIDE];
+            }
+
+            #pragma unroll
+            for (int x = 0; x < TM; ++x)
+            {
+                #pragma unroll
+                for (int u = 0; u < TN; ++u)
+                {
+                    acc[x][u] += a[x] * b[u];
+                }
+            }
         }
         __syncthreads();
     }
-    if ((row < R) && (col < C))
+
+    #pragma unroll
+    for (int i = 0; i < TM; ++i)
     {
-        m3[row * C + col] = Fvalue00;
-    }
-    if ((row < R) && (col+16 < C))
-    {
-        m3[row * C + col+16] = Fvalue01;
-    }
-    if ((row+16 < R) && (col < C))
-    {
-        m3[(row+16) * C + col] = Fvalue10;
-    }
-    if ((row+16 < R) && (col+16 < C))
-    {
-        m3[(row+16) * C + col+16] = Fvalue11;
+        #pragma unroll
+        for (int j = 0; j < TN; ++j)
+        {
+            if (((row + i*STRIDE) < R) && ((col + j*STRIDE) < C))
+            {
+                m3[(row + (i*STRIDE)) * C + col + j*STRIDE] = acc[i][j];
+            }
+        }
     }
 }
