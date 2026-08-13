@@ -17,8 +17,7 @@
 #define COARSE_FACTOR   4
 
 // tiledkernel.cu: 16x16 threads, each owning a 2x2 patch -> 32x32 output tile.
-#define TILED_BLOCK     16
-#define TILED_OUT_TILE  64   // must match TILE_WIDTH in tiledkernel.cu
+// (tiled launch shape now lives in tiledkernel.cu: BLOCK_DIM, TILE_WIDTH)
 
 // ---------------------------------------------------------------------------
 // Expected kernel signatures, all identical to your naive one:
@@ -102,9 +101,11 @@ static void launch(Variant v, const float* dA, const float* dB, float* dC,
     }
 #if TEST_TILED
     else if (v == TILED) {
-        dim3 block(TILED_BLOCK, TILED_BLOCK);
-        dim3 grid((C + TILED_OUT_TILE - 1) / TILED_OUT_TILE,
-                  (R + TILED_OUT_TILE - 1) / TILED_OUT_TILE);
+        // Launch shape is owned by tiledkernel.cu, not by this harness.
+        // BLOCK_DIM and TILE_WIDTH come from there; change them there.
+        dim3 block(BLOCK_DIM, BLOCK_DIM);
+        dim3 grid((C + TILE_WIDTH - 1) / TILE_WIDTH,
+                  (R + TILE_WIDTH - 1) / TILE_WIDTH);
         tiledMult<<<grid, block>>>((float*)dA, (float*)dB, dC, uR, uC, K);
     }
 #endif
