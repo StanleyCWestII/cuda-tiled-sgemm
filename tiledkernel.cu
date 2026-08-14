@@ -1,5 +1,16 @@
 #include <cuda_runtime.h> // brings in cuda tools
 
+// NOTICE: nvcc compiler is automatically applying float4. No __launch_bounds__ or
+// reinterpret_cast needed.
+
+// float4
+// float4 is a struct type defined in CUDA:
+// struct float4 {float x, y, z, w; };
+
+// With LDS.128 (float4), there are 16 bytes per thread and 8 threads served
+// together. This means each thread requests a float4 from memory, which is
+// 8 * 4 = 32 bytes total, equaling the 32 banks present.
+
 // The complete hierachy:
 // Level 1: m3, the whole output matrix is 2048 x 2048 = 4,194,304 elements
 // Level 2: one block is 128 x 128 = 16,384 elements
@@ -20,7 +31,9 @@
 #define BLOCK_DIM 16 // block is 16x16 = 256 threads
 #define BK 8 // K-terms handled per batch
 #define TILE_WIDTH 128 // output patch one BLOCK owns, = BLOCK_DIM * TM
-#define STRIDE (TILE_WIDTH / TM) // STRIDE is the gap between the outputs one thread owns
+#define CONTIG 1 // for contigous values
+#define VEC 4 // so we don't walk over banks twice over
+#define HALF 64 // tells strip 2 where to begin
 
 // A batch is one trip through the outermost i loop. BK is how big a trip is.
 // In this kernel, there are 1024 + 1024 = 2048 products. With BK = 8, we have
@@ -52,9 +65,6 @@ void tiledMult(float* m1, float* m2, float* m3, unsigned int R, unsigned int C, 
 
     int tx = threadIdx.x; // both run 0-15. picks a column INSIDE the block
     int ty = threadIdx.y; // picks a row INSIDE the block
-
-    int row = by * (TILE_WIDTH) + ty; // which block's band, then how far down inside it
-    int col = bx * (TILE_WIDTH) + tx; // which block's band, then how far across inside it
 
     // adr is row * width + col. It represents the address of a thread inside its
     // block. It can be anything from 0 to 255.
@@ -120,24 +130,27 @@ void tiledMult(float* m1, float* m2, float* m3, unsigned int R, unsigned int C, 
         __syncthreads(); // makes sure each thread is finished loading its values
 
         // j runs 0-7 for 256 batches, loading 8 * 256 = 2048 values total
+        #pragma unroll
         for (int j = 0; j < BK; ++j)
         {
             float a[TM]; // an array of 8 input rows
             float b[TN]; // an array of 8 column rows
             #pragma unroll
-            for (int y = 0; y < TM; ++y) // iterates over all float a elements
+            for (int y = 0; y < VEC; ++y) // iterates over all float a elements
             {
                 // Mds is stored at 8 rows of 128. j walks each row. ty is the
-                // specific thread id. STRIDE multiplies by 16 on each iteration,
+                // specific thread id. CONTIG multiplies by 1 on each iteration,
                 // picking 8 elements out of the 128 elements on each row.
-                a[y] = Mds[j][ty + y*STRIDE];
+                a[y] = Mds[j][VEC*ty + y*CONTIG];
+                a[y+4] = Mds[j][VEC*ty + HALF + y*CONTIG];
             }
 
             #pragma unroll
-            for (int y = 0; y < TN; ++y)
+            for (int y = 0; y < VEC; ++y)
             {
                 // same function but it walks the column
-                b[y] = Nds[j][tx + y*STRIDE];
+                b[y] = Nds[j][VEC*tx + y*CONTIG];
+                b[y+4] = Nds[j][VEC*tx + HALF + y*CONTIG];
             }
 
             #pragma unroll
@@ -163,14 +176,21 @@ void tiledMult(float* m1, float* m2, float* m3, unsigned int R, unsigned int C, 
         #pragma unroll
         for (int j = 0; j < TN; ++j)
         {
+            // FOR EACH: by*TILE_WIDTH tells you WHICH BLOCK. ty*VEC tells you
+            // WHICH THREAD. (i/4)*HALF tells you WHICH STRIP. (i%4) tells you
+            // WHERE IN THE STRIP. Together, it gives you the COMPLETE ADDRESS
+            // for output i.
+            int row = by * (TILE_WIDTH) + ty*VEC + (i/4)*HALF + (i%4);
+            int col = bx * (TILE_WIDTH) + tx*VEC + (j/4)*HALF + (j%4);
+
             // checks if the row and column are out-of-bounds
-            if (((row + i*STRIDE) < R) && ((col + j*STRIDE) < C))
+            if (row < R && col < C)
             {
-                // final write to m3. (row + (i*STRIDE)) walks each of the thread's
-                // output rows. (col + (j*STRIDE)) walks each of the thread's output
+                // final write to m3. (row + (i*CONTIG)) walks each of the thread's
+                // output rows. (col + (j*CONTIG)) walks each of the thread's output
                 // columns. Multiplying by C allows you to step past each column
                 // into the actual value
-                m3[(row + (i*STRIDE)) * C + (col + j*STRIDE)] = acc[i][j];
+                m3[(row * C + col)] = acc[i][j];
             }
         }
     }
