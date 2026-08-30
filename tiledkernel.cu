@@ -11,12 +11,12 @@
 // together. This means each thread requests a float4 from memory, which is
 // 8 * 4 = 32 bytes total, equaling the 32 banks present.
 
-// The complete hierachy:
+// The complete hierarchy:
 // Level 1: m3, the whole output matrix is 2048 x 2048 = 4,194,304 elements
 // Level 2: one block is 128 x 128 = 16,384 elements
 // Level 3: one thread is 8 x 8 = 64 elements
 // This kernel is running 65,536 threads
-// 4104304 / 65536 = 64 elements per thread
+// 4194304 / 65536 = 64 elements per thread
 
 // This kernel computes m1 * m2 = m3
 // m1 is R*K
@@ -31,12 +31,12 @@
 #define BLOCK_DIM 16 // block is 16x16 = 256 threads
 #define BK 8 // K-terms handled per batch
 #define TILE_WIDTH 128 // output patch one BLOCK owns, = BLOCK_DIM * TM
-#define CONTIG 1 // for contigous values
+#define CONTIG 1 // for contiguous values
 #define VEC 4 // so we don't walk over banks twice over
 #define HALF 64 // tells strip 2 where to begin
 
 // A batch is one trip through the outermost i loop. BK is how big a trip is.
-// In this kernel, there are 1024 + 1024 = 2048 products. With BK = 8, we have
+// In this kernel, there are 2048 products. With BK = 8, we have
 // 256 batches.
 
 __global__ // declares the kernel to be global
@@ -49,7 +49,6 @@ void tiledMult(float* m1, float* m2, float* m3, unsigned int R, unsigned int C, 
     // m2[k][col]. However, m1 has to be transposed into [k][row] for later
     // computation.
 
-    // Mds is 8 wide, 32 tall. Nds is 128 wide, 2 tall.
     __shared__ float Mds[2][BK][TILE_WIDTH]; // a shared memory array 8 * 128 = 1024 large
     __shared__ float Nds[2][BK][TILE_WIDTH]; // together, we have 2048 elements
 
