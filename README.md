@@ -115,7 +115,7 @@ The three kernels times seven shapes is the 21/21. The ragged cases show the bou
 |---|---|
 | `cpukernel.c` | `test.cu` |
 | `gpukernel.cu` | `Makefile` |
-| `tiledkernel.cu` | README |
+| `tiledkernel.cu` | |
 
 Every kernel in this repo is mine, completely. The tests and benchmarks were built with AI assistance.
 
